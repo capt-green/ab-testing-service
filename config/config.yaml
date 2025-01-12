@@ -1,0 +1,27 @@
+server:
+  port: 8080
+  host: "0.0.0.0"
+
+database:
+  host: "postgres"
+  port: 5432
+  user: "abtest"
+  password: "abtest"
+  dbname: "abtest"
+  sslmode: "disable"
+
+redis:
+  host: "redis"
+  port: 6379
+  db: 0
+
+kafka:
+  brokers:
+    - "localhost:9092"
+  topic: "ab-test-stats"
+
+prometheus:
+  port: 9090
+
+jwt:
+  secret: "your-secret-key-here"

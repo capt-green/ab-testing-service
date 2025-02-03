@@ -1,5 +1,9 @@
 FROM golang:1.23-alpine
 
+# Install git.
+# Git is required for fetching the dependencies.
+RUN apk update && apk add --no-cache git
+
 WORKDIR /app
 
 # Install build dependencies
@@ -15,10 +19,10 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN go build -o main .
+RUN CGO_ENABLED=0 GOOS=linux go build -o main .
 
 # Expose ports
-EXPOSE 8080
+EXPOSE 8080 80
 
 # Run the application
 CMD ["./main"]

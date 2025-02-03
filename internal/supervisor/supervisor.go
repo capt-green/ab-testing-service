@@ -56,7 +56,7 @@ func (s *Supervisor) Start(ctx context.Context) {
 		log.Printf("Failed to start Redis subscriber: %v", err)
 	}
 
-	// Load existing proxies from Postgres
+	// Load existing proxies configs from cached Postgres
 	configs, err := s.storage.GetProxies(ctx)
 	if err != nil {
 		log.Printf("Failed to load proxy configs: %v", err)
@@ -87,7 +87,8 @@ func (s *Supervisor) Start(ctx context.Context) {
 
 	// Start statistics collection
 	go func() {
-		ticker := time.NewTicker(time.Minute)
+		log.Printf("Starting statistics collection")
+		ticker := time.NewTicker(time.Second * 10)
 		defer ticker.Stop()
 		for {
 			select {
@@ -105,7 +106,7 @@ func (s *Supervisor) Shutdown(ctx context.Context) error {
 	defer s.mutex.Unlock()
 
 	var lastErr error
-	
+
 	// Shutdown the main server if it exists
 	if s.server != nil {
 		if err := s.server.Shutdown(ctx); err != nil {

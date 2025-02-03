@@ -155,7 +155,7 @@ function getEventDescription(event) {
 async function loadHistory() {
   try {
     const response = await axios.get(`/api/proxies/${props.proxyId}/history`)
-    history.value = response.data.history
+    history.value = response.data.history || []
   } catch (error) {
     console.error('Failed to load proxy history:', error)
   }

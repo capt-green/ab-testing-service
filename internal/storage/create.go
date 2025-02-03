@@ -7,55 +7,58 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/ab-testing-service/internal/models"
 )
 
 func (s *Storage) CreateProxy(ctx context.Context, proxy *models.Proxy) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	// Insert proxy
-	proxy.ID = uuid.New().String()
-	proxy.CreatedAt = time.Now()
-	proxy.UpdatedAt = proxy.CreatedAt
-
-	var conditionJSON any = nil
-	if proxy.Condition != nil {
-		bytes, err := json.Marshal(proxy.Condition)
-		if err != nil {
-			return fmt.Errorf("failed to marshal condition: %w", err)
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) (err error) {
+		repo := New(tx)
+		var conditionJSON []byte = nil
+		if proxy.Condition != nil {
+			bytes, err := json.Marshal(proxy.Condition)
+			if err != nil {
+				return fmt.Errorf("failed to marshal condition: %w", err)
+			}
+			conditionJSON = bytes // Если есть данные, присваиваем []byte
 		}
-		conditionJSON = bytes // Если есть данные, присваиваем []byte
-	}
+		err = repo.CreateProxy(ctx, &CreateProxyParams{
+			ID:        uuid.New().String(),
+			CreatedAt: pgtype.Timestamptz{Time: time.Now()},
+			UpdatedAt: pgtype.Timestamptz{Time: time.Now()},
+			ListenUrl: proxy.ListenURL,
+			Mode:      string(proxy.Mode),
+			PathKey:   proxy.PathKey,
+			Tags:      proxy.Tags,
+			Condition: conditionJSON,
+		})
 
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO proxies (id, listen_url, mode, condition, tags, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		proxy.ID, proxy.ListenURL, proxy.Mode, conditionJSON, pq.Array(proxy.Tags), proxy.CreatedAt, proxy.UpdatedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert proxy: %w, condition: %s, condition type: %T, condition value: %+v", err, conditionJSON, proxy.Condition, proxy.Condition)
-	}
-
-	// Insert targets
-	for i := range proxy.Targets {
-		target := &proxy.Targets[i]
-		target.ProxyID = proxy.ID
-
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO targets (id, proxy_id, url, weight, is_active)
-			VALUES ($1, $2, $3, $4, $5)`,
-			target.ID, target.ProxyID, target.URL, target.Weight, target.IsActive,
-		)
 		if err != nil {
-			return fmt.Errorf("failed to insert target: %w", err)
+			return fmt.Errorf(
+				"failed to insert proxy: %w, condition: %s, condition type: %T, condition value: %+v", err, conditionJSON, proxy.Condition, proxy.Condition,
+			)
 		}
-	}
 
-	return tx.Commit()
+		// Insert targets
+		for i := range proxy.Targets {
+			target := &proxy.Targets[i]
+
+			err = repo.CreateTarget(ctx, &CreateTargetParams{
+				ID:       target.ID,
+				ProxyID:  target.ProxyID,
+				Url:      target.URL,
+				Weight:   target.Weight,
+				IsActive: target.IsActive,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to insert target: %w", err)
+			}
+		}
+
+		return nil
+	})
+
+	return err
 }

@@ -1,154 +1,279 @@
 <template>
-  <div>
-    <div class="bg-white shadow">
-      <div class="px-4 sm:px-6 lg:mx-auto lg:max-w-6xl lg:px-8">
-        <div class="py-6 md:flex md:items-center md:justify-between lg:border-t lg:border-gray-200">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center">
-              <div>
-                <div class="flex items-center">
-                  <h1 class="ml-3 text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:leading-9">
-                    Welcome back!
-                  </h1>
+  <div class="dashboard">
+    <el-row :gutter="20">
+      <el-col :span="12">
+        <h1>Dashboard</h1>
+      </el-col>
+      <el-col :span="12">
+        <el-select v-model="selectedProxy" placeholder="Selected Proxy">
+          <el-option v-for="proxy in proxies" :key="proxy.id" :label="proxy.listen_url" :value="proxy.id"/>
+        </el-select>
+      </el-col>
+    </el-row>
+    <SelectPeriod
+        v-model:selected-period="selectedPeriod"
+        v-model:time-range="timeRange"
+        v-model:refresh-interval="refreshInterval"
+        @periodChange="handlePeriodChange"
+        @setupAutoRefresh="setupAutoRefresh"
+        @force-refresh="fetchStats"
+    />
+
+    <!-- Factoids -->
+    <StatsCards :stats="stats"/>
+
+    <!-- Time Chart -->
+    <el-row :gutter="20" class="charts-section">
+      <el-col :span="24">
+        <el-card class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <div class="chart-controls">
+                <span>Requests Over Time</span>
+                <el-switch
+                    v-model="compareWithPrevious"
+                    active-text="Compare with previous period"
+                    @change="fetchComparisonData"
+                />
+                <div class="control-group">
+                  <el-select v-model="chartType" placeholder="Chart Type">
+                    <el-option label="Line" value="line"/>
+                    <el-option label="Area" value="area"/>
+                    <el-option label="Bar" value="bar"/>
+                  </el-select>
+                  <el-checkbox v-model="stackCharts">Stack Charts</el-checkbox>
+                  <el-checkbox v-model="normalizeData">Normalize</el-checkbox>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
+          </template>
+          <TimeChart
+              :chart-type="chartType"
+              :heatmap-metric="heatmapMetric"
+              :stack-charts="stackCharts"
+              :normalize-data="normalizeData"
+              :available-metrics="availableMetrics"
+              :target-stats-array="targetStatsArray"
+          />
+        </el-card>
+      </el-col>
+    </el-row>
 
-    <div class="mt-8">
-      <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-        <h2 class="text-lg font-medium leading-6 text-gray-900">Overview</h2>
-        <div class="mt-2 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          <!-- Active Proxies Card -->
-          <div class="overflow-hidden rounded-lg bg-white shadow">
-            <div class="p-5">
-              <div class="flex items-center">
-                <div class="flex-shrink-0">
-                  <svg class="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </div>
-                <div class="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt class="truncate text-sm font-medium text-gray-500">Active Proxies</dt>
-                    <dd class="mt-1 text-3xl font-semibold tracking-tight text-gray-900">{{ stats.activeProxies }}</dd>
-                  </dl>
-                </div>
-              </div>
+    <!-- Time Heatmap -->
+    <el-row :gutter="20" class="charts-section">
+      <el-col :span="24">
+        <el-card class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <span>Requests by Time</span>
+              <el-select v-model="heatmapMetric" style="width: 150px">
+                <el-option label="Request Count" value="requests"/>
+                <el-option label="Errors Count" value="errors"/>
+                <el-option label="Users Count" value="users_count"/>
+              </el-select>
             </div>
-          </div>
+          </template>
+          <TimeHeatmap
+              :heatmap-metric="heatmapMetric"
+              :available-metrics="availableMetrics"
+              :target-stats-array="targetStatsArray"
+          />
+        </el-card>
+      </el-col>
+    </el-row>
 
-          <!-- Total Requests Card -->
-          <div class="overflow-hidden rounded-lg bg-white shadow">
-            <div class="p-5">
-              <div class="flex items-center">
-                <div class="flex-shrink-0">
-                  <svg class="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
-                  </svg>
-                </div>
-                <div class="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt class="truncate text-sm font-medium text-gray-500">Total Requests (24h)</dt>
-                    <dd class="mt-1 text-3xl font-semibold tracking-tight text-gray-900">{{ stats.totalRequests }}</dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
+    <!-- Stats Table -->
+    <StatsTable
+        :available-metrics="availableMetrics"
+        :target-stats-array="targetStatsArray"
+    />
 
-          <!-- Success Rate Card -->
-          <div class="overflow-hidden rounded-lg bg-white shadow">
-            <div class="p-5">
-              <div class="flex items-center">
-                <div class="flex-shrink-0">
-                  <svg class="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div class="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt class="truncate text-sm font-medium text-gray-500">Success Rate</dt>
-                    <dd class="mt-1 text-3xl font-semibold tracking-tight text-gray-900">{{ stats.successRate }}%</dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Recent Activity -->
-      <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-8">
-        <h2 class="text-lg font-medium leading-6 text-gray-900 mb-4">Recent Activity</h2>
-        <div class="overflow-hidden bg-white shadow sm:rounded-md">
-          <ul role="list" class="divide-y divide-gray-200">
-            <li v-for="activity in recentActivity" :key="activity.id">
-              <div class="px-4 py-4 sm:px-6">
-                <div class="flex items-center justify-between">
-                  <div class="truncate text-sm font-medium text-indigo-600">{{ activity.proxyId }}</div>
-                  <div class="ml-2 flex flex-shrink-0">
-                    <span :class="[
-                      activity.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
-                      'inline-flex rounded-full px-2 text-xs font-semibold leading-5'
-                    ]">
-                      {{ activity.status }}
-                    </span>
-                  </div>
-                </div>
-                <div class="mt-2 flex justify-between">
-                  <div class="sm:flex">
-                    <div class="mr-6 flex items-center text-sm text-gray-500">
-                      <svg class="mr-1.5 h-5 w-5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                      {{ activity.timestamp }}
-                    </div>
-                    <div class="mt-2 flex items-center text-sm text-gray-500 sm:mt-0">
-                      <svg class="mr-1.5 h-5 w-5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                      </svg>
-                      {{ activity.targetUrl }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
+import {ElMessage} from 'element-plus'
 import axios from 'axios'
+import SelectPeriod from '../components/SelectPeriod.vue'
+import StatsCards from '../components/StatsCards.vue'
+import TimeChart from "@/components/TimeChart.vue";
+import TimeHeatmap from "@/components/TimeHeatmap.vue";
+import StatsTable from "@/components/StatsTable.vue";
 
+const timeRange = ref([new Date().setDate(new Date().getDate() - 7), new Date()])
 const stats = ref({
-  activeProxies: 0,
   totalRequests: 0,
-  successRate: 0
+  totalErrors: 0,
+  uniqueUsers: 0
+})
+const proxies = ref([])
+const selectedProxy = ref('')
+const proxyStats = ref({})
+const selectedPeriod = ref('week')
+const refreshInterval = ref(0)
+const compareWithPrevious = ref(false)
+
+let refreshTimer = null
+
+// Metrics configuration
+const availableMetrics = [
+  {label: 'Requests', value: 'requests'},
+  {label: 'Errors', value: 'errors'},
+  {label: 'Unique Users', value: 'uniqueUsers'}
+]
+
+const targetStatsArray = computed(() => {
+  if (!proxyStats.value.targetStats) return []
+  return Object.entries(proxyStats.value.targetStats).flatMap(([targetId, stats]) => stats.map(stat => ({
+    targetId,
+    ...stat,
+    timestamp: new Date(stat.timestamp)
+  })))
 })
 
-const recentActivity = ref([])
+const formatDate = (date) => {
+  return new Date(date).toISOString()
+}
 
-async function fetchDashboardData() {
-  try {
-    const [statsResponse, activityResponse] = await Promise.all([
-      axios.get('/api/stats'),
-      axios.get('/api/activity/recent')
-    ])
-    
-    stats.value = statsResponse.data
-    recentActivity.value = activityResponse.data
-  } catch (error) {
-    console.error('Failed to fetch dashboard data:', error)
+const chartType = ref('line')
+const stackCharts = ref(false)
+const normalizeData = ref(false)
+const heatmapMetric = ref('requests')
+
+const handlePeriodChange = (period) => {
+  const now = new Date()
+  switch (period) {
+    case 'today':
+      timeRange.value = [
+        new Date(now.setHours(0, 0, 0, 0)),
+        new Date()
+      ]
+      break
+    case 'week':
+      timeRange.value = [
+        new Date(now.setDate(now.getDate() - 7)),
+        new Date()
+      ]
+      break
+    case 'month':
+      timeRange.value = [
+        new Date(now.setMonth(now.getMonth() - 1)),
+        new Date()
+      ]
+      break
+  }
+  fetchStats()
+}
+
+const setupAutoRefresh = (interval) => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+  }
+  if (interval > 0) {
+    refreshTimer = setInterval(() => {
+      fetchStats()
+      if (selectedProxy.value) {
+        fetchProxyStats()
+      }
+    }, interval * 1000)
   }
 }
 
-onMounted(fetchDashboardData)
+const fetchStats = async () => {
+  try {
+    const [start, end] = timeRange.value
+    const response = await axios.get('/api/stats', {
+      params: {
+        start_time: formatDate(start),
+        end_time: formatDate(end)
+      }
+    })
+
+    stats.value = {
+      totalRequests: response.data.total_requests,
+      totalErrors: response.data.total_errors,
+      uniqueUsers: response.data.unique_users
+    }
+  } catch (error) {
+    ElMessage.error('Failed to fetch statistics')
+    console.error('Error fetching stats:', error)
+  }
+}
+
+const fetchProxies = async () => {
+  try {
+    const response = await axios.get('/api/proxies')
+    proxies.value = response.data?.items
+  } catch (error) {
+    ElMessage.error('Failed to fetch proxies')
+    console.error('Error fetching proxies:', error)
+  }
+}
+
+const fetchProxyStats = async () => {
+  if (!selectedProxy.value) return
+
+  try {
+    const [start, end] = timeRange.value
+    const response = await axios.get(`/api/stats/${selectedProxy.value}`, {
+      params: {
+        start_time: formatDate(start),
+        end_time: formatDate(end)
+      }
+    })
+    proxyStats.value = {
+      ...response.data,
+      targetStats: response.data.target_stats,
+    }
+  } catch (error) {
+    ElMessage.error('Failed to fetch proxy statistics')
+    console.error('Error fetching proxy stats:', error)
+  }
+}
+
+const fetchComparisonData = async () => {
+  if (!compareWithPrevious.value) return
+
+  const [start, end] = timeRange.value
+  const duration = end - start
+  const previousStart = new Date(start - duration)
+  const previousEnd = new Date(end - duration)
+
+  try {
+    const response = await axios.get('/api/stats', {
+      params: {
+        start_time: formatDate(previousStart),
+        end_time: formatDate(previousEnd)
+      }
+    })
+    // Update charts with comparison data...
+  } catch (error) {
+    ElMessage.error('Failed to fetch comparison data')
+  }
+}
+
+onMounted(() => {
+  fetchStats()
+  fetchProxies()
+  handlePeriodChange('week')
+})
+
+onUnmounted(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+  }
+})
+
+watch(timeRange, () => {
+  fetchStats()
+  if (selectedProxy.value) {
+    fetchProxyStats()
+  }
+})
+
 </script>
+
+<style scoped>
+@import "dashboard.css";
+</style>

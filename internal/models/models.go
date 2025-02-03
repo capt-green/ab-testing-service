@@ -4,13 +4,6 @@ import (
 	"time"
 )
 
-type ProxyMode string
-
-const (
-	ProxyModeRedirect ProxyMode = "redirect"
-	ProxyModeReverse  ProxyMode = "reverse"
-)
-
 type ConditionType string
 
 const (
@@ -36,17 +29,6 @@ type RouteCondition struct {
 	ParamName string            `json:"param_name" db:"param"` // Name of the parameter to check (for header, query, cookie)
 	Values    map[string]string `json:"values" db:"values"`    // List of values to match targets by id
 	Default   string            `json:"default" db:"default"`  // Default target ID if no match is found
-}
-
-type Proxy struct {
-	ID        string          `json:"id" db:"id"`
-	Mode      string          `json:"mode" db:"mode"`
-	ListenURL string          `json:"listen_url" db:"listen_url"`
-	Targets   []Target        `json:"targets" db:"targets"`
-	Condition *RouteCondition `json:"condition,omitempty" db:"condition"`
-	Tags      []string        `json:"tags" db:"tags"`
-	CreatedAt time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
 }
 
 type Target struct {

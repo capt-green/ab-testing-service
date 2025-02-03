@@ -21,6 +21,7 @@ type RegisterRequest struct {
 	Password string `json:"password" binding:"required,min=6"`
 }
 
+// todo service layer
 func (s *Server) login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.BindJSON(&req); err != nil {

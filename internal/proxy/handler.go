@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -13,6 +15,13 @@ import (
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
+	redirectInfo, err := p.getOrCreateRedirectInfo(r)
+	if err != nil {
+		http.Error(w, "Failed to process redirect info", http.StatusInternalServerError)
+		p.stats.IncrementErrors(p.ID, "")
+		return
+	}
+
 	// Check if this is a redirect request from another proxy
 	if r.Header.Get("X-Internal-Redirect") == "true" {
 		// Remove the header to prevent redirect loops
@@ -20,7 +29,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		target, err := p.selectTarget(r)
 		if err != nil {
 			http.Error(w, "Error selecting target", http.StatusInternalServerError)
-			p.stats.IncrementErrors(p.ID)
+			p.stats.IncrementErrors(p.ID, redirectInfo.RUID)
 			return
 		}
 		targetURL, err := url.Parse(target.URL)
@@ -30,43 +39,49 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		proxy := httputil.NewSingleHostReverseProxy(targetURL)
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			p.stats.IncrementErrors(target.ID)
+			p.stats.IncrementErrors(target.ID, redirectInfo.RUID)
 			http.Error(w, "Error forwarding request", http.StatusBadGateway)
 		}
 		proxy.ServeHTTP(w, r)
 		return
 	}
 
-	redirectInfo, err := p.getOrCreateRedirectInfo(r)
-	if err != nil {
-		http.Error(w, "Failed to process redirect info", http.StatusInternalServerError)
-		return
-	}
-
 	target, err := p.selectTarget(r)
 	if err != nil {
-		http.Error(w, "Error selecting target", http.StatusInternalServerError)
-		p.stats.IncrementErrors(p.ID)
+		http.Error(w, fmt.Sprintf("failed to select target: %s", err), http.StatusInternalServerError)
+		p.stats.IncrementErrors(p.ID, redirectInfo.RUID)
 		return
 	}
+	log.Printf("Selected target: %s", target.URL)
 
 	p.setCookies(w, redirectInfo)
 
-	// Track request
-	p.stats.IncrementRequests(target.ID)
+	// Get user identifier (prefer X-User-ID header, fallback to IP)
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		userID = redirectInfo.RUID
+	}
 
-	if p.Mode == models.ProxyModeRedirect {
+	// Track request with user ID
+	p.stats.IncrementRequestsWithUser(target.ID, userID)
+
+	if p.Mode == models.ProxyModeRedirect || p.Mode == models.ProxyModePath {
 		// Check if the target URL has a different host
-		targetURL := p.appendRedirectParams(target.URL, redirectInfo)
-		parsedTarget, err := url.Parse(targetURL)
+		//targetURL := p.appendRedirectParams(target.URL, redirectInfo)
+		parsedTarget, err := url.Parse(target.URL)
 		if err != nil {
 			http.Error(w, "Invalid target URL", http.StatusInternalServerError)
 			return
 		}
 
+		if parsedTarget.Scheme == "" {
+			parsedTarget.Scheme = "https"
+		}
+
 		// If target host is different from current host, do external redirect
 		if parsedTarget.Host != r.Host {
-			http.Redirect(w, r, targetURL, http.StatusMovedPermanently)
+			log.Printf("Redirecting to %s", parsedTarget.String())
+			http.Redirect(w, r, parsedTarget.String(), http.StatusMovedPermanently)
 			return
 		}
 
@@ -82,6 +97,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	targetURL, err := url.Parse(target.URL)
 	if err != nil {
 		http.Error(w, "Invalid target URL", http.StatusInternalServerError)
+		p.stats.IncrementErrors(target.ID, redirectInfo.RUID)
 		return
 	}
 
@@ -93,7 +109,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		p.stats.IncrementErrors(target.ID)
+		p.stats.IncrementErrors(target.ID, redirectInfo.RUID)
 		http.Error(w, "Error forwarding request", http.StatusBadGateway)
 	}
 
@@ -110,7 +126,7 @@ func (p *Proxy) getTargetByCondition(r *http.Request) *Target {
 	case models.ConditionTypeHeader:
 		value = r.Header.Get(p.Config.Condition.ParamName)
 	case models.ConditionTypeQuery:
-		value = r.URL.Query().Get(p.Config.Condition.ParamName)
+		value = r.URL.Query().Get(p.Config.Condition.ParamName) // fixme
 	case models.ConditionTypeCookie:
 		cookie, err := r.Cookie(p.Config.Condition.ParamName)
 		if err == nil {

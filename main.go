@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/segmentio/kafka-go"
 
 	"github.com/ab-testing-service/internal/config"
@@ -34,8 +36,7 @@ func main() {
 	})
 	defer rdb.Close()
 
-	// Initialize PostgreSQL
-	db, err := sql.Open("postgres", fmt.Sprintf(
+	dbpool, err := pgxpool.New(ctx, fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Database.Host,
 		cfg.Database.Port,
@@ -44,20 +45,23 @@ func main() {
 		cfg.Database.DBName,
 		cfg.Database.SSLMode,
 	))
+	defer dbpool.Close()
+
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	defer db.Close()
 
 	// Initialize Kafka writer
-	kw := kafka.NewWriter(kafka.WriterConfig{
-		Brokers: cfg.Kafka.Brokers,
-		Topic:   cfg.Kafka.Topic,
-	})
+	kafkaURL := cfg.Kafka.KafkaURL
+	topic := cfg.Kafka.Topic
+	if err := createTopic(topic, kafkaURL); err != nil {
+		log.Fatal("Failed to create topic:", err)
+	}
+	kw := getKafkaWriter(kafkaURL, topic)
 	defer kw.Close()
 
 	// Initialize storage
-	store := storage.NewStorage(db, rdb)
+	store := storage.NewStorage(dbpool, rdb)
 
 	// Create supervisor
 	sup := supervisor.NewSupervisor(supervisor.Config{
@@ -92,4 +96,46 @@ func main() {
 		log.Printf("Supervisor shutdown error: %v", err)
 		os.Exit(1)
 	}
+}
+
+func getKafkaWriter(kafkaURL, topic string) *kafka.Writer {
+	return &kafka.Writer{
+		Addr:     kafka.TCP(kafkaURL),
+		Topic:    topic,
+		Balancer: &kafka.LeastBytes{},
+	}
+}
+
+func createTopic(topic, kafkaURL string) error {
+	conn, err := kafka.Dial("tcp", kafkaURL)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	controller, err := conn.Controller()
+	if err != nil {
+		return err
+	}
+
+	controllerConn, err := kafka.Dial("tcp", net.JoinHostPort(controller.Host, strconv.Itoa(controller.Port)))
+	if err != nil {
+		return err
+	}
+	defer controllerConn.Close()
+
+	topicConfigs := []kafka.TopicConfig{
+		{
+			Topic:             topic,
+			NumPartitions:     1,
+			ReplicationFactor: 1,
+		},
+	}
+
+	err = controllerConn.CreateTopics(topicConfigs...)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

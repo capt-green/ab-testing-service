@@ -39,6 +39,10 @@ A Go-based service for splitting web traffic for A/B testing purposes. The servi
 - `GET /api/proxies/:id/stats` - Get proxy statistics
 - `PUT /api/proxies/:id/targets` - Update proxy targets
 
+## Frontend
+
+Frontend devserver starts from the `web` directory. Install dependencies using `npm install` and Run `npm run dev` to start the devserver.
+
 ## Configuration
 
 The service can be configured using the `config/config.yaml` file. Key configuration options include:
@@ -70,6 +74,10 @@ The service exposes Prometheus metrics at `/metrics` endpoint, including:
 - Request counts per target
 - Request latencies
 - Error rates
+
+## Deployment
+
+App will be built and pushed to Github Container Registry (GHCR) on adding tags. Tags can be added like this: `git tag v0.0.1; git push --tags`.
 
 ## License
 

@@ -9,7 +9,7 @@ import (
 	"github.com/ab-testing-service/internal/proxy"
 )
 
-func (s *Supervisor) DeleteProxy(id string) error {
+func (s *Supervisor) DeleteProxy(ctx context.Context, id string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -26,7 +26,6 @@ func (s *Supervisor) DeleteProxy(id string) error {
 	// Remove from proxies map
 	delete(s.proxies, id)
 
-	ctx := context.Background()
 	return s.storage.InvalidateProxyCache(ctx, id)
 }
 
@@ -36,7 +35,7 @@ func (s *Supervisor) handleProxyUpdate(ctx context.Context, proxyID string) erro
 	defer s.mutex.Unlock()
 
 	// Get the latest config from storage
-	cfg, err := s.storage.GetProxyConfig(context.Background(), proxyID)
+	cfg, err := s.storage.GetProxyConfig(ctx, proxyID)
 	if err != nil {
 		return fmt.Errorf("failed to get proxy config: %w", err)
 	}

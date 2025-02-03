@@ -6,6 +6,7 @@ services:
       dockerfile: Dockerfile.backend
     ports:
       - "${BACKEND_PORT:-8080}:8080"
+      - "${SERVICE_PORT:-8081}:80"
     depends_on:
       migrator:
         condition: service_completed_successfully
@@ -21,7 +22,7 @@ services:
       context: ./web
       dockerfile: ../Dockerfile.frontend
     ports:
-      - "${FRONTEND_PORT:-80}:80"
+      - "${FRONTEND_PORT:-8000}:80"
     depends_on:
       - backend
     environment:
@@ -68,6 +69,12 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.7.1
+    healthcheck:
+      test: [ "CMD-SHELL", "kafka-broker-api-versions --bootstrap-server kafka:29092" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     ports:
       - "${KAFKA_PORT:-9092}:9092"
     environment:
@@ -83,11 +90,27 @@ services:
       KAFKA_PROCESS_ROLES: 'broker,controller'
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+
+  kafka-consumer:
+    environment:
+      kafkaURL: kafka:29092
+      topic: "ab-test-stats"
+      groupID: "proxy_stats_consumer"
+      postgresURL: postgresql://abtest:abtest@postgres:5432/abtest?sslmode=disable
+    build:
+      context: .
+      dockerfile: stat-consumer/Dockerfile
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   prometheus:
     image: prom/prometheus:latest
-    # ports:
-    #   - "${PROMETHEUS_PORT:-39090}:9090"
+    ports:
+      - "${PROMETHEUS_PORT:-39090}:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
@@ -101,7 +124,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
     environment:
-      GF_SERVER_ROOT_URL: "http://localhost:${FRONTEND_PORT:-80}/grafana"
+      GF_SERVER_ROOT_URL: "http://localhost:${FRONTEND_PORT:-8000}/grafana"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_SECURITY_COOKIE_SECURE: "false"

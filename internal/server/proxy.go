@@ -1,7 +1,9 @@
 package server
 
 import (
+	"math/rand"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -18,17 +20,27 @@ type RouteCondition struct {
 }
 
 type CreateProxyRequest struct {
-	ListenURL string             `json:"listen_url" binding:"required"`
-	Mode      string             `json:"mode" binding:"required"`
-	Tags      []string           `json:"tags"`
-	Targets   []CreateTargetSpec `json:"targets"`
-	Condition *RouteCondition    `json:"condition,omitempty"`
+	ListenURL     string             `json:"listen_url" binding:"required"`
+	Mode          string             `json:"mode" binding:"required"`
+	Tags          []string           `json:"tags"`
+	Targets       []CreateTargetSpec `json:"targets"`
+	Condition     *RouteCondition    `json:"condition,omitempty"`
+	PathKeyLength int                `json:"path_key_length,omitempty"` // Length of random path key for path-based routing
 }
 
 type CreateTargetSpec struct {
 	URL      string  `json:"url" binding:"required"`
 	Weight   float64 `json:"weight" binding:"required,min=0,max=1"`
 	IsActive bool    `json:"is_active"`
+}
+
+func generateRandomString(length int) string {
+	chars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	var sb strings.Builder
+	for i := 0; i < length; i++ {
+		sb.WriteByte(chars[rand.Intn(len(chars))])
+	}
+	return sb.String()
 }
 
 func (s *Server) createProxy(c *gin.Context) {
@@ -44,7 +56,9 @@ func (s *Server) createProxy(c *gin.Context) {
 	}
 
 	// Validate mode
-	if req.Mode != string(models.ProxyModeReverse) && req.Mode != string(models.ProxyModeRedirect) {
+	if req.Mode != string(models.ProxyModeReverse) &&
+		req.Mode != string(models.ProxyModeRedirect) &&
+		req.Mode != string(models.ProxyModePath) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy mode"})
 		return
 	}
@@ -52,8 +66,18 @@ func (s *Server) createProxy(c *gin.Context) {
 	// Create proxy model
 	p := &models.Proxy{
 		ListenURL: req.ListenURL,
-		Mode:      req.Mode,
+		Mode:      models.ProxyMode(req.Mode),
 		Tags:      req.Tags,
+	}
+
+	// Generate random path key for path-based routing
+	if req.Mode == string(models.ProxyModePath) {
+		if req.PathKeyLength == 0 {
+			req.PathKeyLength = 8 // Default length
+		}
+
+		key := generateRandomString(req.PathKeyLength)
+		p.PathKey = &key
 	}
 
 	// Convert targets
@@ -103,7 +127,7 @@ func (s *Server) createProxy(c *gin.Context) {
 	cfg := proxy.Config{
 		ID:        p.ID,
 		ListenURL: p.ListenURL,
-		Mode:      models.ProxyMode(p.Mode),
+		Mode:      p.Mode,
 	}
 
 	// Convert targets to config format
@@ -127,6 +151,11 @@ func (s *Server) createProxy(c *gin.Context) {
 			Values:    p.Condition.Values,
 			Default:   p.Condition.Default,
 		}
+	}
+
+	// Add path key if provided
+	if p.PathKey != nil {
+		cfg.PathKey = *p.PathKey
 	}
 
 	// Create proxy in supervisor -> start proxy server

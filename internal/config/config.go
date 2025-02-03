@@ -28,8 +28,8 @@ type Config struct {
 	} `yaml:"redis"`
 
 	Kafka struct {
-		Brokers []string `yaml:"brokers"`
-		Topic   string   `yaml:"topic"`
+		KafkaURL string `yaml:"kafkaURL"`
+		Topic    string `yaml:"topic"`
 	} `yaml:"kafka"`
 
 	Prometheus struct {

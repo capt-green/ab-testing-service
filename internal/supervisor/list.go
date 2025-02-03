@@ -1,6 +1,8 @@
 package supervisor
 
 import (
+	"context"
+	"log"
 	"sort"
 
 	"github.com/ab-testing-service/internal/proxy"
@@ -12,17 +14,22 @@ func (s *Supervisor) GetProxy(id string) *proxy.Proxy {
 	return s.proxies[id].Proxy
 }
 
-func (s *Supervisor) ListProxies(sortBy string, sortDesc bool) []proxy.Config {
+func (s *Supervisor) ListProxies(ctx context.Context, sortBy string, sortDesc bool) []proxy.Config {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
 	var configs []proxy.Config
 	for id, p := range s.proxies {
-		tags := s.storage.GetTags(id)
+		tags, err := s.storage.GetTags(ctx, id)
+		if err != nil {
+			log.Printf("Failed to get tags for proxy %s: %v", id, err)
+			continue
+		}
 		configs = append(configs, proxy.Config{
 			ID:        id,
 			ListenURL: p.Proxy.ListenURL,
 			Mode:      p.Proxy.Mode,
+			PathKey:   p.Proxy.PathKey,
 			Targets:   p.Proxy.Targets,
 			Condition: p.Proxy.Config.Condition,
 			Tags:      tags,

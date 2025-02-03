@@ -2,22 +2,22 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
-	"github.com/lib/pq"
-	_ "github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ab-testing-service/internal/models"
 	"github.com/ab-testing-service/internal/proxy"
 )
 
 type Storage struct {
-	db    *sql.DB
+	q     Querier
+	db    *pgxpool.Pool
 	Redis *redis.Client
 }
 
@@ -26,68 +26,19 @@ const (
 	targetTTL = 1 * time.Hour
 )
 
-type Tx struct {
-	tx *sql.Tx
-}
-
-func NewStorage(db *sql.DB, redis *redis.Client) *Storage {
+func NewStorage(conn *pgxpool.Pool, redis *redis.Client) *Storage {
 	return &Storage{
-		db:    db,
+		q:     New(conn),
+		db:    conn,
 		Redis: redis,
 	}
-}
-
-func (s *Storage) BeginTx(ctx context.Context) (*Tx, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	return &Tx{tx: tx}, nil
-}
-
-func (tx *Tx) Commit() error {
-	return tx.tx.Commit()
-}
-
-func (tx *Tx) Rollback() error {
-	return tx.tx.Rollback()
-}
-
-func (tx *Tx) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	return tx.tx.ExecContext(ctx, query, args...)
-}
-
-func (s *Storage) UpdateProxyCondition(ctx context.Context, proxyID string, condition *models.RouteCondition) error {
-	conditionJSON, err := json.Marshal(condition)
-	if err != nil {
-		return fmt.Errorf("failed to marshal condition: %w", err)
-	}
-
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE proxies SET condition = $1, updated_at = $2 WHERE id = $3`,
-		conditionJSON, time.Now(), proxyID,
-	)
-	return err
-}
-
-func (s *Storage) UpdateProxyConditionWithTx(ctx context.Context, tx *Tx, proxyID string, condition *models.RouteCondition) error {
-	conditionJSON, err := json.Marshal(condition)
-	if err != nil {
-		return fmt.Errorf("failed to marshal condition: %w", err)
-	}
-
-	_, err = tx.tx.ExecContext(ctx,
-		`UPDATE proxies SET condition = $1, updated_at = $2 WHERE id = $3`,
-		conditionJSON, time.Now(), proxyID,
-	)
-	return err
 }
 
 func (s *Storage) SaveVisit(ctx context.Context, visit *models.Visit) error {
 	visit.ID = uuid.New().String()
 	visit.CreatedAt = time.Now()
 
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.db.Exec(ctx,
 		`INSERT INTO visits (id, proxy_id, target_id, user_id, rid, rrid, ruid, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		visit.ID, visit.ProxyID, visit.TargetID, visit.UserID,
@@ -96,74 +47,10 @@ func (s *Storage) SaveVisit(ctx context.Context, visit *models.Visit) error {
 	return err
 }
 
-func (s *Storage) UpdateTargets(ctx context.Context, proxyID string, targets []models.Target) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	// Delete existing targets
-	_, err = tx.ExecContext(ctx, `DELETE FROM targets WHERE proxy_id = $1`, proxyID)
-	if err != nil {
-		return err
-	}
-
-	// Insert new targets
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO targets (id, proxy_id, url, weight, is_active)
-		VALUES ($1, $2, $3, $4, $5)
-	`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, target := range targets {
-		_, err = stmt.ExecContext(ctx,
-			target.ID,
-			proxyID,
-			target.URL,
-			target.Weight,
-			target.IsActive,
-		)
-		if err != nil {
-			return err
-		}
-	}
-
-	return tx.Commit()
-}
-
-func (s *Storage) UpdateTargetsWithTx(ctx context.Context, tx *Tx, proxyID string, targets []models.Target) error {
-	// Delete existing targets
-	_, err := tx.tx.ExecContext(ctx,
-		`DELETE FROM targets WHERE proxy_id = $1`,
-		proxyID,
-	)
-	if err != nil {
-		return err
-	}
-
-	// Insert new targets
-	for _, target := range targets {
-		_, err = tx.tx.ExecContext(ctx,
-			`INSERT INTO targets (id, proxy_id, url, weight, is_active)
-			VALUES ($1, $2, $3, $4, $5)`,
-			target.ID, proxyID, target.URL, target.Weight, target.IsActive,
-		)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func (s *Storage) GetProxies(ctx context.Context) ([]proxy.Config, error) {
 	var proxies []proxy.Config
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, listen_url, mode, condition, tags
+	rows, err := s.db.Query(ctx,
+		`SELECT id, listen_url, mode, condition, tags, path_key
 		FROM proxies ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -171,10 +58,14 @@ func (s *Storage) GetProxies(ctx context.Context) ([]proxy.Config, error) {
 	}
 	defer rows.Close()
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate proxies: %w", err)
+	}
+
 	for rows.Next() {
 		var p models.Proxy
 		var conditionJSON []byte
-		if err := rows.Scan(&p.ID, &p.ListenURL, &p.Mode, &conditionJSON, pq.Array(&p.Tags)); err != nil {
+		if err := rows.Scan(&p.ID, &p.ListenURL, &p.Mode, &conditionJSON, &p.Tags, &p.PathKey); err != nil {
 			return nil, fmt.Errorf("failed to scan proxy: %w", err)
 		}
 		if len(conditionJSON) > 0 {
@@ -183,13 +74,85 @@ func (s *Storage) GetProxies(ctx context.Context) ([]proxy.Config, error) {
 				return nil, fmt.Errorf("failed to unmarshal condition: %w", err)
 			}
 		}
-		proxies = append(proxies, proxy.Config{
+
+		config := proxy.Config{
 			ID:        p.ID,
 			ListenURL: p.ListenURL,
-			Mode:      models.ProxyMode(p.Mode),
-			Condition: (*proxy.Condition)(p.Condition),
+			Mode:      p.Mode,
 			Tags:      p.Tags,
-		})
+		}
+
+		if p.PathKey != nil {
+			config.PathKey = *p.PathKey
+		}
+
+		condition, err := convertCondition(p.Condition)
+		if err != nil {
+			// Обработка ошибки
+			log.Printf("Failed to convert condition for proxy %s: %v", p.ID, err)
+			// Возможные варианты:
+			// 1. Пропустить этот прокси
+			//continue
+			// 2. Вернуть ошибку выше
+			//return nil, fmt.Errorf("failed to process proxy %s: %w", p.ID, err)
+			// 3. Вернуть nil и продолжить обработку остальных прокси
+			//config.Condition = nil
+		}
+
+		if condition != nil {
+			config.Condition = condition
+		}
+		proxies = append(proxies, config)
 	}
 	return proxies, nil
+}
+
+// Безопасное приведение типов с обработкой ошибок
+func convertCondition(rc *models.RouteCondition) (*proxy.Condition, error) {
+	if rc == nil {
+		return nil, nil // Если входной параметр nil, возвращаем nil без ошибки
+	}
+
+	// Проверяем поля на корректность
+	if !rc.Type.IsValid() {
+		return nil, fmt.Errorf("invalid condition type: %v", rc.Type)
+	}
+
+	// Создаем новый объект Condition
+	condition := &proxy.Condition{
+		Type:      rc.Type,
+		ParamName: rc.ParamName,
+		Values:    make(map[string]string),
+		Default:   rc.Default,
+	}
+
+	// Копируем значения map, проверяя их валидность
+	for k, v := range rc.Values {
+		if k == "" {
+			return nil, fmt.Errorf("empty key in Values map")
+		}
+		condition.Values[k] = v
+	}
+
+	return condition, nil
+}
+
+func convertConditionSafe(rc *models.RouteCondition) (c *proxy.Condition, err error) {
+	// Защита от паники при конвертации
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("failed to convert condition: %v", r)
+		}
+	}()
+
+	if rc == nil {
+		return nil, nil
+	}
+
+	return &proxy.Condition{
+		Type:      rc.Type,
+		ParamName: rc.ParamName,
+		Values:    rc.Values,
+		Default:   rc.Default,
+	}, nil
 }

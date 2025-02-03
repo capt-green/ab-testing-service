@@ -10,7 +10,6 @@ import (
 
 	"github.com/ab-testing-service/internal/models"
 	"github.com/ab-testing-service/internal/proxy"
-	"github.com/ab-testing-service/internal/storage"
 )
 
 type UpdateTargetsRequest struct {
@@ -74,6 +73,7 @@ func (s *Server) validateCondition(c *gin.Context, req *UpdateTargetsRequest) er
 		return err
 	}
 
+	// todo
 	//if err := s.validateConditionTargets(req); err != nil {
 	//	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	//	return err
@@ -156,6 +156,7 @@ func (s *Server) convertToConditionModels(targets []models.Target, req UpdateTar
 	}
 }
 
+// Get user ID from request context
 func (s *Server) getUserID(c *gin.Context) *string {
 	if user, exists := c.Get("user"); exists {
 		if u, ok := user.(*models.User); ok {
@@ -165,89 +166,23 @@ func (s *Server) getUserID(c *gin.Context) *string {
 	return nil
 }
 
-// Transaction handling
-func (s *Server) executeTransaction(c *gin.Context, proxyID string, currentProxy *models.Proxy,
-	targets []models.Target, condition *models.RouteCondition) error {
-
-	tx, err := s.storage.BeginTx(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError,
-			gin.H{"error": fmt.Sprintf("failed to start transaction: %v", err)})
-		return err
-	}
-	defer tx.Rollback()
+func (s *Server) executeTransaction(c *gin.Context, proxyID string,
+	currentProxy *models.Proxy, targets []models.Target,
+	condition *models.RouteCondition) error {
 
 	userID := s.getUserID(c)
 
-	if err := s.recordChanges(c, tx, proxyID, currentProxy, targets, condition, userID); err != nil {
-		return err
-	}
-
-	if err := s.updateStorage(c, tx, proxyID, targets, condition); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		c.JSON(http.StatusInternalServerError,
-			gin.H{"error": fmt.Sprintf("failed to commit transaction: %v", err)})
-		return err
-	}
-
-	return nil
-}
-
-func (s *Server) recordChanges(c *gin.Context, tx *storage.Tx, proxyID string,
-	currentProxy *models.Proxy, targets []models.Target,
-	condition *models.RouteCondition, userID *string) error {
-
-	if err := s.storage.RecordProxyChange(
+	err := s.storage.UpdateProxyWithTargetsAndCondition(
 		c.Request.Context(),
-		tx,
 		proxyID,
-		models.ChangeTypeTargetsUpdate,
-		currentProxy.Targets,
+		currentProxy,
 		targets,
+		condition,
 		userID,
-	); err != nil {
-		c.JSON(http.StatusInternalServerError,
-			gin.H{"error": fmt.Sprintf("failed to record target changes: %v", err)})
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return err
-	}
-
-	if condition != nil {
-		if err := s.storage.RecordProxyChange(
-			c.Request.Context(),
-			tx,
-			proxyID,
-			models.ChangeTypeConditionUpdate,
-			currentProxy.Condition,
-			condition,
-			userID,
-		); err != nil {
-			c.JSON(http.StatusInternalServerError,
-				gin.H{"error": fmt.Sprintf("failed to record condition changes: %v", err)})
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (s *Server) updateStorage(c *gin.Context, tx *storage.Tx, proxyID string,
-	targets []models.Target, condition *models.RouteCondition) error {
-
-	if err := s.storage.UpdateTargetsWithTx(c.Request.Context(), tx, proxyID, targets); err != nil {
-		c.JSON(http.StatusInternalServerError,
-			gin.H{"error": fmt.Sprintf("failed to update targets: %v", err)})
-		return err
-	}
-
-	if condition != nil {
-		if err := s.storage.UpdateProxyConditionWithTx(c.Request.Context(), tx, proxyID, condition); err != nil {
-			c.JSON(http.StatusInternalServerError,
-				gin.H{"error": fmt.Sprintf("failed to update condition: %v", err)})
-			return err
-		}
 	}
 
 	return nil

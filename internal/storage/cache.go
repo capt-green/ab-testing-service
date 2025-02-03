@@ -69,54 +69,57 @@ func (s *Storage) GetProxy(ctx context.Context, id string) (*models.Proxy, error
 	}
 
 	// Fallback to PostgreSQL
-	var proxy models.Proxy
-	var conditionJSON []byte
+	var conditionJSON models.RouteCondition
 
-	err = s.db.QueryRowContext(ctx,
-		`SELECT id, listen_url, mode, condition, created_at, updated_at
-		FROM proxies WHERE id = $1`,
-		id,
-	).Scan(&proxy.ID, &proxy.ListenURL, &proxy.Mode, &conditionJSON, &proxy.CreatedAt, &proxy.UpdatedAt)
+	p, err := s.q.GetProxy(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(conditionJSON) > 0 {
-		proxy.Condition = &models.RouteCondition{}
-		if err := json.Unmarshal(conditionJSON, proxy.Condition); err != nil {
+	if len(p.Condition) > 0 {
+		if err := json.Unmarshal(p.Condition, &conditionJSON); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal condition: %w", err)
 		}
 	}
 
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, url, weight, is_active FROM targets WHERE proxy_id = $1`,
-		id,
-	)
+	proxyModel := models.Proxy{
+		ID:        p.ID,
+		ListenURL: p.ListenUrl,
+		Mode:      models.ProxyMode(p.Mode),
+		Condition: &conditionJSON,
+		PathKey:   p.PathKey,
+		CreatedAt: p.CreatedAt.Time,
+		UpdatedAt: p.UpdatedAt.Time,
+	}
+
+	targets, err := s.q.GetTargetsByProxyID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var target models.Target
-		target.ProxyID = proxy.ID
-		if err := rows.Scan(&target.ID, &target.URL, &target.Weight, &target.IsActive); err != nil {
-			return nil, err
+	for _, target := range targets {
+		target := models.Target{
+			ProxyID:  p.ID,
+			ID:       target.ID,
+			URL:      target.Url,
+			Weight:   target.Weight,
+			IsActive: target.IsActive,
 		}
-		proxy.Targets = append(proxy.Targets, target)
+		proxyModel.Targets = append(proxyModel.Targets, target)
 	}
 
 	// Cache in Redis
-	if data, err := json.Marshal(proxy); err == nil {
+	if data, err := json.Marshal(proxyModel); err == nil {
 		s.Redis.Set(ctx, key, data, proxyTTL)
 	}
 
-	return &proxy, nil
+	return &proxyModel, nil
 }
 
 func (s *Storage) GetTargets(ctx context.Context, proxyID string) ([]*models.Target, error) {
 	// Try Redis first
 	key := fmt.Sprintf("targets:%s", proxyID)
+
 	data, err := s.Redis.Get(ctx, key).Bytes()
 	if err == nil {
 		var targets []*models.Target
@@ -126,22 +129,21 @@ func (s *Storage) GetTargets(ctx context.Context, proxyID string) ([]*models.Tar
 	}
 
 	// Fallback to PostgreSQL
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, proxy_id, url, weight, is_active FROM targets WHERE proxy_id = $1`,
-		proxyID,
-	)
+	rows, err := s.q.GetTargetsByProxyID(ctx, proxyID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var targets []*models.Target
-	for rows.Next() {
-		var target models.Target
-		if err := rows.Scan(&target.ID, &target.ProxyID, &target.URL, &target.Weight, &target.IsActive); err != nil {
-			return nil, err
-		}
-		targets = append(targets, &target)
+	targets := make([]*models.Target, 0, len(rows))
+
+	for _, item := range rows {
+		targets = append(targets, &models.Target{
+			ID:       item.ID,
+			ProxyID:  proxyID,
+			URL:      item.Url,
+			Weight:   item.Weight,
+			IsActive: item.IsActive,
+		})
 	}
 
 	// Cache in Redis

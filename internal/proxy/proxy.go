@@ -18,6 +18,7 @@ type Config struct {
 	ID        string           `json:"id"`
 	ListenURL string           `json:"listen_url"`
 	Mode      models.ProxyMode `json:"mode"`
+	PathKey   string           `json:"path_key,omitempty"`
 	Targets   []Target         `json:"targets"`
 	Condition *Condition       `json:"condition"`
 	Tags      []string         `json:"tags"`
@@ -34,6 +35,7 @@ type Proxy struct {
 	ID         string
 	ListenURL  string
 	Mode       models.ProxyMode
+	PathKey    string
 	Targets    []Target
 	Config     Config
 	mutex      sync.RWMutex
@@ -63,7 +65,7 @@ func NewProxy(cfg Config) (*Proxy, error) {
 		Config:     cfg,
 		metrics:    newProxyMetrics(cfg.ID),
 		cookieName: fmt.Sprintf("proxy_%s", cfg.ID),
-		stats:      NewProxyStats(),
+		stats:      NewProxyStats(cfg.ID),
 	}
 
 	return proxy, nil

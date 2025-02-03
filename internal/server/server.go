@@ -16,8 +16,10 @@ type Server struct {
 	config     *config.Config
 	supervisor *supervisor.Supervisor
 	storage    *storage.Storage
-	srv        *http.Server
+	srv        *http.Server // todo config params
 }
+
+// todo middleware for metrics
 
 func NewServer(cfg *config.Config, sup *supervisor.Supervisor, storage *storage.Storage) *Server {
 	s := &Server{
@@ -35,7 +37,7 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	return s.srv.Shutdown(ctx)
+	return s.srv.Shutdown(ctx) // fixme add timeout
 }
 
 type GetProxyListRequest struct {
@@ -63,11 +65,11 @@ func (s *Server) listProxies(c *gin.Context) {
 		req.Offset = 0
 	}
 
-	proxies := s.supervisor.ListProxies(req.SortBy, req.SortDesc)
-	
+	proxies := s.supervisor.ListProxies(c.Request.Context(), req.SortBy, req.SortDesc)
+
 	// Calculate total count for pagination
 	total := len(proxies)
-	
+
 	// Apply pagination
 	end := req.Offset + req.Limit
 	if end > total {
@@ -76,9 +78,9 @@ func (s *Server) listProxies(c *gin.Context) {
 	if req.Offset > total {
 		req.Offset = total
 	}
-	
+
 	paginatedProxies := proxies[req.Offset:end]
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"items": paginatedProxies,
 		"total": total,
@@ -98,7 +100,7 @@ func (s *Server) getProxy(c *gin.Context) {
 
 func (s *Server) deleteProxy(c *gin.Context) {
 	id := c.Param("id")
-	if err := s.supervisor.DeleteProxy(id); err != nil {
+	if err := s.supervisor.DeleteProxy(c.Request.Context(), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

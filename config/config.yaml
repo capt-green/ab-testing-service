@@ -16,8 +16,7 @@ redis:
   db: 0
 
 kafka:
-  brokers:
-    - "kafka:29092"
+  kafkaURL: "kafka:29092"
   topic: "ab-test-stats"
 
 prometheus:

@@ -41,6 +41,7 @@ func (s *Server) setupRouter() {
 		api.GET("/proxies", s.listProxies)
 		api.POST("/proxies", s.createProxy)
 		api.GET("/proxies/:id", s.getProxy)
+		api.GET("/proxies/:id/history", s.getProxyChanges)
 		api.DELETE("/proxies/:id", s.deleteProxy)
 		api.PUT("/proxies/:id/targets", s.updateProxyTargets)
 		api.GET("/proxies/:id/changes", s.getProxyChanges)
@@ -49,6 +50,10 @@ func (s *Server) setupRouter() {
 		api.GET("/tags", s.getAllTags)
 		api.GET("/proxies/by-tags", s.getProxiesByTags)
 		api.PUT("/proxies/:id/tags", s.updateProxyTags)
+
+		// Stats endpoints
+		api.GET("/stats", s.getStats)
+		api.GET("/stats/:proxy_id", s.getProxyStats)
 
 		// Metrics
 		api.GET("/metrics", func(c *gin.Context) {

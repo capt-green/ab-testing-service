@@ -20,37 +20,49 @@ func (s *Supervisor) collectStatistics(ctx context.Context) {
 
 		stats := instance.Proxy.GetStats()
 		if stats == nil {
+			log.Printf("Error getting stats for proxy %s", instance.Proxy.Config.ID)
 			continue
 		}
 
 		// Get current stats
 		currentStats := stats.GetStats()
 
-		// Create stats message
-		statsMsg := map[string]interface{}{
-			"proxy_id":     instance.Proxy.Config.ID,
-			"timestamp":    time.Now().Unix(),
-			"target_stats": currentStats,
-		}
+		for targetID, targetStats := range currentStats {
+			// Преобразуем map[string]struct{} в []string для JSON
+			uniqueUsers := make([]string, 0, len(targetStats.UniqueUsers))
+			for userID := range targetStats.UniqueUsers {
+				uniqueUsers = append(uniqueUsers, userID)
+			}
 
-		// Send stats to Kafka if configured
-		if s.kafkaWriter != nil {
-			statsJSON, err := json.Marshal(statsMsg)
+			statsMsg := map[string]interface{}{
+				"proxy_id":      instance.Proxy.Config.ID,
+				"target_id":     targetID,
+				"timestamp":     time.Now().Unix(),
+				"request_count": targetStats.RequestCount,
+				"error_count":   targetStats.ErrorCount,
+				"unique_users":  uniqueUsers,
+			}
+
+			msgBytes, err := json.Marshal(statsMsg)
+			log.Printf("Statistics message: %v", statsMsg)
 			if err != nil {
-				log.Printf("Error marshaling stats for proxy %s: %v", instance.Proxy.Config.ID, err)
+				log.Printf("Error marshaling message: %v", err)
 				continue
 			}
 
-			msg := kafka.Message{
-				Key:   []byte(instance.Proxy.Config.ID),
-				Value: statsJSON,
-			}
-			if err := s.kafkaWriter.WriteMessages(ctx, msg); err != nil {
-				log.Printf("Error sending stats for proxy %s: %v", instance.Proxy.Config.ID, err)
+			err = s.kafkaWriter.WriteMessages(ctx,
+				kafka.Message{
+					Value: msgBytes,
+				},
+			)
+			if err != nil {
+				log.Printf("Error writing message: %v", err)
 			}
 		}
 
 		// Reset stats after successful sending
 		stats.Reset()
 	}
+
+	//log.Printf("Statistics collected")
 }

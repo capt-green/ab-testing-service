@@ -1,0 +1,38 @@
+.dashboard {
+    padding: 20px;
+}
+
+.charts-section {
+    margin-bottom: 20px;
+}
+
+.chart-card {
+    margin-bottom: 20px;
+}
+
+.no-proxy-selected {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+}
+
+.chart-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.control-group {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    min-width: 380px;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+}

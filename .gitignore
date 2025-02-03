@@ -1,3 +1,7 @@
 .idea/
 .vscode/
 .env
+
+ai_intro.md
+dump.md
+.pd.yml

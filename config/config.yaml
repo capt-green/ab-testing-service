@@ -1,6 +1,6 @@
 server:
   port: 8080
-  host: "0.0.0.0"
+  host: "backend"
 
 database:
   host: "postgres"
@@ -17,7 +17,7 @@ redis:
 
 kafka:
   brokers:
-    - "localhost:9092"
+    - "kafka:29092"
   topic: "ab-test-stats"
 
 prometheus:

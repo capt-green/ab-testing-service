@@ -1,0 +1,20 @@
+FROM golang:1.23-alpine
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Install goose
+RUN go install github.com/pressly/goose/v3/cmd/goose@latest
+
+# Copy migrations
+COPY migrations/ /app/migrations/
+
+# Create non-root user
+RUN adduser -D appuser
+USER appuser
+
+# Set entrypoint
+ENTRYPOINT ["goose"]
+CMD ["-dir", "/app/migrations", "postgres", "postgresql://abtest:abtest@postgres:5432/abtest?sslmode=disable", "up"]

@@ -29,15 +29,41 @@ jobs:
       #     username: ${{ secrets.DOCKERHUB_USER }}
       #     password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image for backend
         uses: docker/build-push-action@v3
         with:
           context  : .
-          file     : Dockerfile
+          file     : Dockerfile.backend
           platforms: linux/amd64
           push     : true
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}-backend:latest
+            ghcr.io/${{ github.repository }}-backend:${{ github.ref_name }}
+          #   ${{ secrets.DOCKERHUB_USER }}/${{ github.event.repository.name }}:latest
+          #   ${{ secrets.DOCKERHUB_USER }}/${{ github.event.repository.name }}:${{ github.ref_name }}
+
+      - name: Build and push Docker image for frontend
+        uses: docker/build-push-action@v3
+        with:
+          context  : .
+          file     : Dockerfile.frontend
+          platforms: linux/amd64
+          push     : true
+          tags: |
+            ghcr.io/${{ github.repository }}-frontend:latest
+            ghcr.io/${{ github.repository }}-frontend:${{ github.ref_name }}
+          #   ${{ secrets.DOCKERHUB_USER }}/${{ github.event.repository.name }}:latest
+          #   ${{ secrets.DOCKERHUB_USER }}/${{ github.event.repository.name }}:${{ github.ref_name }}
+
+      - name: Build and push Docker image for migrator
+        uses: docker/build-push-action@v3
+        with:
+          context  : .
+          file     : Dockerfile.migrator
+          platforms: linux/amd64
+          push     : true
+          tags: |
+            ghcr.io/${{ github.repository }}-migrator:latest
+            ghcr.io/${{ github.repository }}-migrator:${{ github.ref_name }}
           #   ${{ secrets.DOCKERHUB_USER }}/${{ github.event.repository.name }}:latest
           #   ${{ secrets.DOCKERHUB_USER }}/${{ github.event.repository.name }}:${{ github.ref_name }}

@@ -1,0 +1,5 @@
+exclude:
+  - ^.git
+  - ^ai_intro.md
+  - ^dump.md
+  - ^go.sum
